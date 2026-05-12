@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fellowship TV</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --green: #00ff41;
+    --green-dim: #00aa2a;
+    --green-glow: rgba(0,255,65,0.18);
+    --bg: #050a05;
+    --panel-bg: rgba(0,10,0,0.92);
+    --border: #00ff4155;
+    --scanline: rgba(0,0,0,0.18);
+    --amber: #ffb300;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    overflow-y: auto;
+    user-select: none;
+  }
+
+  /* ── CRT wrapper ── */
+  #crt {
+    position: relative;
+    width: 100vw;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scanlines overlay */
+  #crt::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      var(--scanline) 0px,
+      var(--scanline) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* Vignette */
+  #crt::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.7) 100%);
+    pointer-events: none;
+    z-index: 99;
+  }
+
+  /* ── Status bar top ── */
+  #statusBar {
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 12px;
+    background: rgba(0,20,0,0.85);
+    border-bottom: 1px solid var(--border);
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 6px var(--green);
+    z-index: 10;
+  }
+
+  #statusLeft { color: var(--green); }
+  #statusRight { color: var(--green-dim); }
+  #clock { color: var(--amber); text-shadow: 0 0 6px var(--amber); margin-left: 16px; }
+
+  /* ── Main stage ── */
+  #stage {
+    position: relative;
+    overflow: hidden;
+    background: #000;
+    width: 100%;
+    height: min(calc(100vh - 84px), calc(100vw * var(--video-ratio, 0.5625)));
+    min-height: 240px;
+  }
+
+  #videoEl {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+    background: #000;
+  }
+
+  #staticCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+  }
+
+  /* Now playing overlay */
+  #nowPlaying {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: rgba(0,10,0,0.78);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    color: var(--green);
+    text-shadow: 0 0 8px var(--green);
+    letter-spacing: 0.08em;
+    opacity: 0;
+    transition: opacity 0.4s;
+    z-index: 20;
+    pointer-events: none;
+    max-width: 60vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #chyron {
+    position: absolute;
+    bottom: 0;
+    left: 0; right: 0;
+    background: rgba(0,20,0,0.7);
+    border-top: 1px solid var(--border);
+    padding: 4px 12px;
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    color: var(--green-dim);
+    letter-spacing: 0.06em;
+    z-index: 20;
+    pointer-events: none;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  #chyronText {
+    display: inline-block;
+    animation: ticker 30s linear infinite;
+  }
+  @keyframes ticker {
+    0%   { transform: translateX(100vw); }
+    100% { transform: translateX(-200%); }
+  }
+
+  /* ── Controls bar ── */
+  #controls {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: rgba(0,15,0,0.9);
+    border-top: 1px solid var(--border);
+    z-index: 10;
+    flex-wrap: wrap;
+  }
+
+  button {
+    background: transparent;
+    border: 1px solid var(--green-dim);
+    color: var(--green);
+    font-family: 'VT323', monospace;
+    font-size: 17px;
+    letter-spacing: 0.05em;
+    padding: 3px 10px;
+    cursor: pointer;
+    text-shadow: 0 0 4px var(--green);
+    transition: all 0.15s;
+  }
+  button:hover {
+    background: var(--green-glow);
+    border-color: var(--green);
+    box-shadow: 0 0 8px var(--green-glow);
+  }
+  button.active {
+    background: var(--green-glow);
+    border-color: var(--green);
+    color: var(--green);
+    box-shadow: 0 0 10px var(--green-glow);
+  }
+
+  #volSlider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 80px;
+    height: 4px;
+    background: var(--green-dim);
+    outline: none;
+    cursor: pointer;
+  }
+  #volSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  #sep { color: var(--border); margin: 0 4px; }
+  .spacer { flex: 1; }
+
+  /* ── Playlist panel ── */
+  #playlistPanel {
+    position: absolute;
+    top: 0; right: 0;
+    width: 280px;
+    height: 100%;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+  }
+  #playlistPanel.open { transform: translateX(0); }
+
+  #playlistHeader {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'VT323', monospace;
+    font-size: 20px;
+    text-shadow: 0 0 6px var(--green);
+    letter-spacing: 0.1em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #playlistItems {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--green-dim) transparent;
+  }
+  #playlistItems::-webkit-scrollbar { width: 4px; }
+  #playlistItems::-webkit-scrollbar-thumb { background: var(--green-dim); }
+
+  .pl-item {
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(0,255,65,0.07);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--green-dim);
+    transition: color 0.1s, background 0.1s;
+  }
+  .pl-item:hover { background: var(--green-glow); color: var(--green); }
+  .pl-item.playing { color: var(--green); text-shadow: 0 0 6px var(--green); }
+  .pl-item::before { content: '▸ '; opacity: 0; }
+  .pl-item.playing::before { opacity: 1; }
+
+  /* ── Load panel ── */
+  #loadPanel {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    padding: 20px 24px;
+    min-width: 340px;
+    z-index: 60;
+    box-shadow: 0 0 30px var(--green-glow);
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #loadPanel.open { display: flex; }
+
+  #loadPanel h2 {
+    font-family: 'VT323', monospace;
+    font-size: 22px;
+    letter-spacing: 0.1em;
+    text-shadow: 0 0 8px var(--green);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+
+  #loadPanel label {
+    font-size: 13px;
+    color: var(--green-dim);
+    letter-spacing: 0.05em;
+  }
+
+  #urlInput {
+    background: rgba(0,20,0,0.8);
+    border: 1px solid var(--border);
+    color: var(--green);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    width: 100%;
+    resize: vertical;
+    min-height: 70px;
+    outline: none;
+  }
+  #urlInput:focus { border-color: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+
+  #loadPanel .row { display: flex; gap: 8px; }
+
+  /* Flicker animation for logo */
+  @keyframes flicker {
+    0%, 97%, 100% { opacity: 1; }
+    98% { opacity: 0.4; }
+    99% { opacity: 0.8; }
+  }
+  #logo { animation: flicker 8s infinite; }
+</style>
+</head>
+<body>
+<div id="crt">
+
+  <!-- Top status bar -->
+  <div id="statusBar">
+    <span id="statusLeft"><span id="logo">⬡ FELLOWSHIP TV</span></span>
+    <span>
+      <span id="statusRight">NO SIGNAL — LOAD PLAYLIST TO BEGIN</span>
+      <span id="clock"></span>
+    </span>
+  </div>
+
+  <!-- Main stage -->
+  <div id="stage">
+    <canvas id="staticCanvas"></canvas>
+    <video id="videoEl" autoplay></video>
+    <div id="nowPlaying">♦ <span id="npTitle"></span></div>
+    <div id="chyron"><span id="chyronText">FELLOWSHIP OF THE STREAM — LIVE BROADCAST — STAND BY FOR PROGRAMMING — FELLOWSHIP OF THE STREAM — LIVE BROADCAST — STAND BY FOR PROGRAMMING —</span></div>
+
+    <!-- Playlist panel -->
+    <div id="playlistPanel">
+      <div id="playlistHeader">
+        <span>PLAYLIST</span>
+        <button onclick="togglePlaylist()" style="border:none;font-size:18px;">✕</button>
+      </div>
+      <div id="playlistItems"></div>
+    </div>
+
+    <!-- Load panel -->
+    <div id="loadPanel">
+      <h2>LOAD CONTENT</h2>
+      <label>PASTE VIDEO URLS (one per line — MP4 / WebM)</label>
+      <textarea id="urlInput" placeholder="https://example.com/video.mp4&#10;https://example.com/video2.mp4"></textarea>
+      <div class="row">
+        <button onclick="loadFromURLs()" style="flex:1">LOAD URLS</button>
+        <button onclick="document.getElementById('fileInput').click()" style="flex:1">LOCAL FILES</button>
+      </div>
+      <button onclick="loadDemoContent()">LOAD DEMO CONTENT</button>
+      <button onclick="closeLoadPanel()">CANCEL</button>
+      <input type="file" id="fileInput" multiple accept="video/*" style="display:none">
+    </div>
+  </div>
+
+  <!-- Controls bar -->
+  <div id="controls">
+    <button onclick="openLoadPanel()">⊞ LOAD</button>
+    <span id="sep">│</span>
+    <button onclick="prevTrack()">◂◂ PREV</button>
+    <button onclick="togglePlay()" id="btnPlay">▶ PLAY</button>
+    <button onclick="nextTrack()">NEXT ▸▸</button>
+    <span id="sep">│</span>
+    <button onclick="toggleShuffle()" id="btnShuffle" class="active">⇌ SHUFFLE</button>
+    <button onclick="toggleLoop()" id="btnLoop">↺ LOOP</button>
+    <span id="sep">│</span>
+    <button onclick="togglePlaylist()" id="btnPL">☰ LIST</button>
+    <span class="spacer"></span>
+    <span style="font-family:'VT323',monospace;font-size:16px;color:var(--green-dim);">VOL</span>
+    <input type="range" id="volSlider" min="0" max="1" step="0.02" value="0.8">
+    <button onclick="toggleMute()" id="btnMute">🔊</button>
+  </div>
+
+</div>
+
+<script>
+  // ── State ──────────────────────────────────────────────────
+  let playlist = [];
+  let shuffledOrder = [];
+  let shufflePosition = 0;
+  let currentIndex = 0;
+  let shuffleMode = true;
+  let loopMode = false;
+  let staticActive = false;
+  window._fileNames = {};
+
+  const video = document.getElementById('videoEl');
+  const canvas = document.getElementById('staticCanvas');
+  const ctx = canvas.getContext('2d');
+  const statusRight = document.getElementById('statusRight');
+  const statusLeft = document.getElementById('statusLeft');
+  const npTitle = document.getElementById('npTitle');
+  const nowPlaying = document.getElementById('nowPlaying');
+  const btnPlay = document.getElementById('btnPlay');
+  const btnShuffle = document.getElementById('btnShuffle');
+  const btnLoop = document.getElementById('btnLoop');
+  const btnMute = document.getElementById('btnMute');
+  const volSlider = document.getElementById('volSlider');
+  const fileInput = document.getElementById('fileInput');
+
+  // ── Clock ──────────────────────────────────────────────────
+  function updateClock() {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2,'0');
+    const m = String(now.getMinutes()).padStart(2,'0');
+    const s = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('clock').textContent = ` ${h}:${m}:${s}`;
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  // ── Shuffle ────────────────────────────────────────────────
+  function getShuffledOrder() {
+    const arr = [...Array(playlist.length).keys()];
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // ── Filename helper ────────────────────────────────────────
+  function getFileName(url) {
+    if (window._fileNames && window._fileNames[url]) return window._fileNames[url];
+    try {
+      const parts = new URL(url).pathname.split('/');
+      const raw = decodeURIComponent(parts[parts.length - 1] || url);
+      return raw.replace(/\.[^.]+$/, '');
+    } catch {
+      return url;
+    }
+  }
+
+  // ── Playlist UI ────────────────────────────────────────────
+  function renderPlaylist() {
+    const container = document.getElementById('playlistItems');
+    container.innerHTML = '';
+    playlist.forEach((url, i) => {
+      const div = document.createElement('div');
+      div.className = 'pl-item' + (i === currentIndex ? ' playing' : '');
+      div.textContent = getFileName(url);
+      div.title = getFileName(url);
+      div.onclick = () => { currentIndex = i; playAt(i); };
+      container.appendChild(div);
+    });
+  }
+
+  function updatePlaylistActive() {
+    document.querySelectorAll('.pl-item').forEach((el, i) => {
+      el.classList.toggle('playing', i === currentIndex);
+    });
+  }
+
+  // ── Static noise ───────────────────────────────────────────
+  let staticAnim = null;
+
+  function showStatic() {
+    staticActive = true;
+    canvas.style.display = 'block';
+    video.style.display = 'none';
+    canvas.width = canvas.offsetWidth || 640;
+    canvas.height = canvas.offsetHeight || 360;
+    function drawFrame() {
+      if (!staticActive) return;
+      const imgData = ctx.createImageData(canvas.width, canvas.height);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const v = Math.random() > 0.5 ? Math.floor(Math.random() * 80) : 0;
+        // Slight green tint on the static
+        d[i]   = v * 0.4;
+        d[i+1] = v;
+        d[i+2] = v * 0.4;
+        d[i+3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      staticAnim = requestAnimationFrame(drawFrame);
+    }
+    drawFrame();
+  }
+
+  function hideStatic() {
+    staticActive = false;
+    if (staticAnim) cancelAnimationFrame(staticAnim);
+    canvas.style.display = 'none';
+    video.style.display = 'block';
+  }
+
+  // ── Playback ───────────────────────────────────────────────
+  function playAt(index) {
+    currentIndex = index;
+    const url = playlist[index];
+    if (!url) return;
+
+    showStatic();
+    statusRight.textContent = 'TUNING...';
+
+    setTimeout(() => {
+      video.src = url;
+      video.volume = parseFloat(volSlider.value);
+      video.load();
+      hideStatic();
+      video.play().catch(() => {
+        statusRight.textContent = 'PRESS PLAY TO START';
+      });
+
+      const name = getFileName(url).toUpperCase();
+      npTitle.textContent = name;
+      statusRight.textContent = `NOW PLAYING: ${name}`;
+
+      // Now playing flash
+      nowPlaying.style.opacity = '1';
+      setTimeout(() => { nowPlaying.style.opacity = '0'; }, 3500);
+
+      updatePlaylistActive();
+      updatePlayBtn();
+    }, 600 + Math.random() * 400);
+  }
+
+  function nextTrack() {
+    if (!playlist.length) return;
+    if (shuffleMode) {
+      shufflePosition = (shufflePosition + 1) % shuffledOrder.length;
+      if (shufflePosition === 0) shuffledOrder = getShuffledOrder();
+      playAt(shuffledOrder[shufflePosition]);
+    } else {
+      playAt((currentIndex + 1) % playlist.length);
+    }
+  }
+
+  function prevTrack() {
+    if (!playlist.length) return;
+    if (shuffleMode) {
+      shufflePosition = (shufflePosition - 1 + shuffledOrder.length) % shuffledOrder.length;
+      playAt(shuffledOrder[shufflePosition]);
+    } else {
+      playAt((currentIndex - 1 + playlist.length) % playlist.length);
+    }
+  }
+
+  // Match the stage to the current video's natural aspect ratio.
+  // Uses a CSS variable instead of forcing a pixel height, so loading/local uploads stay reliable.
+  function snapStageToVideo() {
+    if (!video.videoWidth || !video.videoHeight) return;
+    const ratio = video.videoHeight / video.videoWidth;
+    document.documentElement.style.setProperty('--video-ratio', ratio.toString());
+  }
+  video.addEventListener('loadedmetadata', snapStageToVideo);
+
+  video.addEventListener('ended', () => {
+    if (loopMode) {
+      video.play();
+    } else {
+      nextTrack();
+    }
+  });
+
+  // ── Controls ───────────────────────────────────────────────
+  function togglePlay() {
+    if (!playlist.length) return;
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+    updatePlayBtn();
+  }
+
+  function updatePlayBtn() {
+    btnPlay.textContent = video.paused ? '▶ PLAY' : '‖ PAUSE';
+  }
+
+  video.addEventListener('pause', updatePlayBtn);
+  video.addEventListener('play', updatePlayBtn);
+
+  function toggleShuffle() {
+    shuffleMode = !shuffleMode;
+    btnShuffle.classList.toggle('active', shuffleMode);
+    if (shuffleMode) {
+      shuffledOrder = getShuffledOrder();
+      shufflePosition = 0;
+      statusRight.textContent = 'SHUFFLE ON';
+    } else {
+      statusRight.textContent = 'SHUFFLE OFF';
+    }
+  }
+
+  function toggleLoop() {
+    loopMode = !loopMode;
+    btnLoop.classList.toggle('active', loopMode);
+    statusRight.textContent = loopMode ? 'LOOP ON' : 'LOOP OFF';
+  }
+
+  function toggleMute() {
+    video.muted = !video.muted;
+    btnMute.textContent = video.muted ? '🔇' : '🔊';
+  }
+
+  volSlider.addEventListener('input', () => {
+    video.volume = parseFloat(volSlider.value);
+    if (video.muted && video.volume > 0) {
+      video.muted = false;
+      btnMute.textContent = '🔊';
+    }
+  });
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    if (e.code === 'ArrowRight') nextTrack();
+    if (e.code === 'ArrowLeft') prevTrack();
+    if (e.code === 'KeyS') toggleShuffle();
+    if (e.code === 'KeyL') toggleLoop();
+    if (e.code === 'KeyM') toggleMute();
+    if (e.code === 'KeyP') togglePlaylist();
+  });
+
+  // ── Load panel ─────────────────────────────────────────────
+  function openLoadPanel() {
+    document.getElementById('loadPanel').classList.add('open');
+  }
+  function closeLoadPanel() {
+    document.getElementById('loadPanel').classList.remove('open');
+  }
+
+  function loadFromURLs() {
+    const raw = document.getElementById('urlInput').value.trim();
+    if (!raw) return;
+    const urls = raw.split('\n').map(l => l.trim()).filter(l => /^https?:\/\/.+$/.test(l));
+    if (!urls.length) { statusRight.textContent = 'NO VALID URLS FOUND'; return; }
+
+    playlist = urls;
+    shuffledOrder = getShuffledOrder();
+    shufflePosition = 0;
+    statusRight.textContent = `LOADED ${playlist.length} TITLES`;
+    document.getElementById('urlInput').value = '';
+    closeLoadPanel();
+    renderPlaylist();
+
+    const startIndex = shuffleMode ? shuffledOrder[0] : 0;
+    playAt(startIndex);
+  }
+
+  fileInput.addEventListener('change', () => {
+    const files = Array.from(fileInput.files);
+    if (!files.length) return;
+
+    // Revoke old blob URLs
+    playlist.forEach(u => { if (u.startsWith('blob:')) URL.revokeObjectURL(u); });
+    window._fileNames = {};
+
+    playlist = files.map(f => {
+      const url = URL.createObjectURL(f);
+      window._fileNames[url] = f.name.replace(/\.[^.]+$/, '');
+      return url;
+    });
+
+    shuffledOrder = getShuffledOrder();
+    shufflePosition = 0;
+    statusRight.textContent = `LOADED ${playlist.length} LOCAL FILES`;
+    closeLoadPanel();
+    renderPlaylist();
+
+    const startIndex = shuffleMode ? shuffledOrder[0] : 0;
+    playAt(startIndex);
+    fileInput.value = '';
+  });
+
+  function loadDemoContent() {
+    const demos = [
+      { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', name: 'Big Buck Bunny' },
+      { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', name: 'Elephants Dream' },
+      { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', name: 'For Bigger Blazes' },
+      { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackOnStreetAndDirt.mp4', name: 'Subaru Outback' },
+    ];
+    window._fileNames = {};
+    playlist = demos.map(d => { window._fileNames[d.url] = d.name; return d.url; });
+    shuffledOrder = getShuffledOrder();
+    shufflePosition = 0;
+    statusRight.textContent = `LOADED ${playlist.length} DEMO TITLES`;
+    closeLoadPanel();
+    renderPlaylist();
+
+    const startIndex = shuffleMode ? shuffledOrder[0] : 0;
+    playAt(startIndex);
+  }
+
+  // ── Playlist panel ─────────────────────────────────────────
+  function togglePlaylist() {
+    document.getElementById('playlistPanel').classList.toggle('open');
+  }
+
+  video.addEventListener('error', () => {
+    statusRight.textContent = 'VIDEO FAILED TO LOAD — TRY A DIFFERENT FILE/FORMAT';
+    showStatic();
+    updatePlayBtn();
+  });
+
+  // ── Init ───────────────────────────────────────────────────
+  showStatic();
+  statusRight.textContent = 'NO SIGNAL — LOAD PLAYLIST TO BEGIN';
+</script>
+</body>
+</html>
